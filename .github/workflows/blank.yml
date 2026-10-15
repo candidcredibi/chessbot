@@ -30,18 +30,46 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
 
-      - name: Set up JDK 17
-        uses: actions/setup-java@v4
+      # JDK 21 собирает и AGP 8.x, и AGP 9; нужные toolchain подтянет foojay из settings.gradle.kts
+      - name: Set up JDK 21
+        uses: actions/setup-java@v5
         with:
           distribution: temurin
-          java-version: '17'
+          java-version: '21'
 
-      - name: Set up Android SDK (licenses accepted)
-        uses: android-actions/setup-android@v3
+      # Android SDK уже есть на ubuntu-latest: принимаем лицензии и ставим то, что требует проект
+      # (compileSdk { version = release(36) { minorApiLevel = 1 } } -> platforms;android-36.1)
+      - name: Prepare Android SDK
+        run: |
+          SDK="${ANDROID_HOME:-$ANDROID_SDK_ROOT}"
+          echo "ANDROID_HOME=$SDK"
+          SM=$(ls "$SDK"/cmdline-tools/latest/bin/sdkmanager "$SDK"/cmdline-tools/*/bin/sdkmanager 2>/dev/null | head -n1 || true)
+          if [ -z "$SM" ]; then
+            echo "::warning::sdkmanager не найден, полагаемся на авто-загрузку Gradle"
+            exit 0
+          fi
+          set +o pipefail
+          yes | "$SM" --sdk_root="$SDK" --licenses > /dev/null 2>&1
+          set -o pipefail
 
-      # В репозитории нет gradlew, поэтому версию Gradle определяем сами
+          B=$(ls app/build.gradle.kts app/build.gradle 2>/dev/null | head -n1)
+          LINE=$(grep -hE 'compileSdk' "$B" | head -n1 || true)
+          MAJOR=$(echo "$LINE" | grep -oE 'release\([0-9]+\)' | grep -oE '[0-9]+' | head -n1 || true)
+          if [ -z "$MAJOR" ]; then MAJOR=$(echo "$LINE" | grep -oE '[0-9]{2}' | head -n1 || true); fi
+          MINOR=$(grep -hoE 'minorApiLevel[[:space:]]*=[[:space:]]*[0-9]+' "$B" | grep -oE '[0-9]+$' | head -n1 || true)
+          PLAT="android-${MAJOR:-36}"
+          if [ -n "$MINOR" ] && [ "$MINOR" != "0" ]; then PLAT="${PLAT}.${MINOR}"; fi
+          echo "Нужная платформа: $PLAT"
+
+          for PKG in "platforms;$PLAT" "build-tools;36.0.0"; do
+            "$SM" --sdk_root="$SDK" "$PKG" || sudo "$SM" --sdk_root="$SDK" "$PKG" \
+              || echo "::warning::Не удалось поставить $PKG, Gradle попробует сам"
+          done
+          echo "ANDROID_HOME=$SDK" >> "$GITHUB_ENV"
+
+      # В репозитории нет gradlew, поэтому версию Gradle подбираем сами
       - name: Detect Gradle version
         id: gv
         run: |
@@ -50,75 +78,65 @@ jobs:
             GV=$(sed -n 's#.*gradle-\([0-9][0-9.]*\)-\(bin\|all\)\.zip.*#\1#p' gradle/wrapper/gradle-wrapper.properties | head -n1)
           fi
           if [ -z "$GV" ]; then
-            AGP=$(grep -hE '^[[:space:]]*(agp|androidGradlePlugin|android-gradle-plugin)[[:space:]]*=' gradle/libs.versions.toml 2>/dev/null | head -n1 | sed -E 's/.*"([^"]+)".*/\1/' || true)
+            T=gradle/libs.versions.toml
+            AGP=""
+            if [ -f "$T" ]; then
+              REF=$(grep -E 'com\.android\.application' "$T" | grep -oE 'version\.ref[[:space:]]*=[[:space:]]*"[^"]+"' | head -n1 | sed -E 's/.*"([^"]+)".*/\1/' || true)
+              if [ -n "$REF" ]; then
+                AGP=$(grep -E "^[[:space:]]*${REF}[[:space:]]*=" "$T" | head -n1 | sed -E 's/.*"([^"]+)".*/\1/' || true)
+              fi
+              if [ -z "$AGP" ]; then
+                AGP=$(grep -hE '^[[:space:]]*(agp|androidGradlePlugin|android-gradle-plugin)[[:space:]]*=' "$T" | head -n1 | sed -E 's/.*"([^"]+)".*/\1/' || true)
+              fi
+            fi
             echo "AGP: ${AGP:-не найден}"
             case "$AGP" in
-              9.*) GV="9.1.0" ;;
-              *)   GV="8.14.3" ;;
+              9.0.*) GV="9.1.0" ;;
+              9.*)   GV="9.3.1" ;;   # AGP 9.1.x требует Gradle 9.3.1+
+              *)     GV="8.14.3" ;;
             esac
           fi
           echo "Gradle: $GV"
           echo "version=$GV" >> "$GITHUB_OUTPUT"
 
       - name: Set up Gradle
-        uses: gradle/actions/setup-gradle@v4
+        uses: gradle/actions/setup-gradle@v5
         with:
           gradle-version: ${{ steps.gv.outputs.version }}
 
-      # Ключи для secrets-gradle-plugin (.env.example -> secrets.properties / local.properties / .env)
-      - name: Prepare secrets and local.properties
+      # secrets-gradle-plugin читает .env (а при его отсутствии .env.example).
+      # Если задан секрет GEMINI_API_KEY, подставляем его в .env.
+      - name: Prepare .env and local.properties
         env:
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
         run: |
-          : > /tmp/secrets.props
-          if [ -f .env.example ]; then
-            grep -E '^[A-Za-z_][A-Za-z0-9_]*=' .env.example | cut -d= -f1 | while read -r k; do
-              if [ "$k" = "GEMINI_API_KEY" ] && [ -n "$GEMINI_API_KEY" ]; then v="$GEMINI_API_KEY"; else v="DUMMY_VALUE"; fi
-              echo "$k=$v" >> /tmp/secrets.props
-            done || true
+          echo "sdk.dir=${ANDROID_HOME}" > local.properties
+          if [ ! -f .env ]; then
+            if [ -f .env.example ]; then cp .env.example .env; else : > .env; fi
           fi
-          if ! grep -q '^GEMINI_API_KEY=' /tmp/secrets.props; then
-            echo "GEMINI_API_KEY=${GEMINI_API_KEY:-DUMMY_VALUE}" >> /tmp/secrets.props
+          if [ -n "$GEMINI_API_KEY" ]; then
+            grep -v '^GEMINI_API_KEY=' .env > .env.tmp || true
+            echo "GEMINI_API_KEY=$GEMINI_API_KEY" >> .env.tmp
+            mv .env.tmp .env
+            echo "GEMINI_API_KEY взят из секрета."
+          else
+            echo "::notice::Секрет GEMINI_API_KEY не задан, используются значения из .env.example"
           fi
-          [ -f secrets.properties ] || cp /tmp/secrets.props secrets.properties
-          [ -f .env ] || cp /tmp/secrets.props .env
-          touch local.properties
-          echo "sdk.dir=${ANDROID_HOME}" >> local.properties
-          cat /tmp/secrets.props >> local.properties
-          echo "Ключи подготовлены (значения скрыты)."
 
-      # Если нет app/google-services.json, плагин google-services упадёт: создаём заглушку
+      # В проекте missingGoogleServicesStrategy = WARN, поэтому сборка пройдёт и без файла.
+      # Но для работы Firebase в приложении нужен настоящий файл: добавьте секрет GOOGLE_SERVICES_JSON.
       - name: Prepare google-services.json
         env:
           GOOGLE_SERVICES_JSON: ${{ secrets.GOOGLE_SERVICES_JSON }}
         run: |
-          F=app/google-services.json
-          if [ -f "$F" ]; then
-            echo "google-services.json уже есть."
-            exit 0
-          fi
-          if [ -n "$GOOGLE_SERVICES_JSON" ]; then
-            printf '%s' "$GOOGLE_SERVICES_JSON" > "$F"
+          if [ -f app/google-services.json ]; then
+            echo "google-services.json уже есть в репозитории."
+          elif [ -n "$GOOGLE_SERVICES_JSON" ]; then
+            printf '%s' "$GOOGLE_SERVICES_JSON" > app/google-services.json
             echo "google-services.json взят из секрета."
-            exit 0
+          else
+            echo "::warning::google-services.json нет: сборка пройдёт, но Firebase в APK работать не будет"
           fi
-          B=$(ls app/build.gradle.kts app/build.gradle 2>/dev/null | head -n1)
-          PKG=$(grep -hoE 'applicationId[[:space:]]*=?[[:space:]]*"[^"]+"' "$B" | head -n1 | sed -E 's/.*"([^"]+)".*/\1/' || true)
-          [ -z "$PKG" ] && PKG=$(grep -hoE 'namespace[[:space:]]*=?[[:space:]]*"[^"]+"' "$B" | head -n1 | sed -E 's/.*"([^"]+)".*/\1/' || true)
-          if [ -z "$PKG" ]; then
-            echo "::warning::Не удалось определить applicationId, заглушка google-services.json не создана"
-            exit 0
-          fi
-          SUF=$(grep -hoE 'applicationIdSuffix[[:space:]]*=?[[:space:]]*"[^"]+"' "$B" | head -n1 | sed -E 's/.*"([^"]+)".*/\1/' || true)
-          PKGS=$(printf '%s\n' "$PKG" "$PKG.debug" "${PKG}${SUF}" | sort -u)
-          CLIENTS=""; i=0
-          for P in $PKGS; do
-            if [ -n "$CLIENTS" ]; then CLIENTS="$CLIENTS,"; fi
-            CLIENTS="$CLIENTS{\"client_info\":{\"mobilesdk_app_id\":\"1:000000000000:android:000000000000000$i\",\"android_client_info\":{\"package_name\":\"$P\"}},\"api_key\":[{\"current_key\":\"dummy-api-key\"}]}"
-            i=$((i+1))
-          done
-          printf '{"project_info":{"project_number":"000000000000","project_id":"dummy-project","storage_bucket":"dummy-project.appspot.com"},"client":[%s],"configuration_version":"1"}' "$CLIENTS" > "$F"
-          echo "Создана заглушка google-services.json для: $PKGS"
 
       # Постоянный ключ подписи нужен, чтобы новые APK ставились поверх старых.
       # Положите base64 вашего debug.keystore в секрет DEBUG_KEYSTORE_BASE64.
@@ -155,6 +173,17 @@ jobs:
           fi
           $CMD :app:assembleDebug --stacktrace --no-daemon \
             -Dorg.gradle.jvmargs="-Xmx4g -XX:MaxMetaspaceSize=1g -Dfile.encoding=UTF-8"
+
+      # При ошибке сборки сохраняем отчёты, чтобы было видно причину
+      - name: Upload build reports on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: build-reports
+          path: |
+            **/build/reports/**
+          if-no-files-found: ignore
+          retention-days: 7
 
       - name: Prepare APK and version
         id: prep
