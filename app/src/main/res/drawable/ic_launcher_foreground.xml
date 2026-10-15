@@ -1,0 +1,32 @@
+<?xml version="1.0" encoding="utf-8"?>
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+    <group
+        android:translateX="18"
+        android:translateY="18"
+        android:scaleX="0.67"
+        android:scaleY="0.67">
+        <!-- Chess Knight Silhouette -->
+        <path
+            android:fillColor="#FFFFFF"
+            android:pathData="M35,16 C30,16 26,20 25,25 C24,30 22,34 18,37 C15,39 15,44 18,46 C21,48 26,48 28,45 C29,43 31,44 32,47 C33,50 33,54 30,59 C28,62 30,66 33,67 C36,68 40,66 42,63 C45,58 48,55 52,53 C55,51 57,48 58,44 C60,38 61,33 60,28 C59,23 55,19 50,17 C45,15 40,16 35,16 Z" />
+        <!-- Knight Base Pedestal -->
+        <path
+            android:fillColor="#E0E6ED"
+            android:pathData="M24,70 L72,70 C74,70 76,72 76,74 L76,78 C76,80 74,82 72,82 L24,82 C22,82 20,80 20,78 L20,74 C20,72 22,70 24,70 Z" />
+        <path
+            android:fillColor="#CBD5E1"
+            android:pathData="M28,64 L68,64 C70,64 71,65 71,67 L71,70 L25,70 L25,67 C25,65 26,64 28,64 Z" />
+        <!-- Knight Mane and Detail -->
+        <path
+            android:fillColor="#00E676"
+            android:pathData="M52,24 C55,24 57,26 57,29 C57,32 54,34 52,34 C50,34 47,32 47,29 C47,26 50,24 52,24 Z" />
+        <!-- Tactical Arrow Indicator (Stockfish Guidance Motif) -->
+        <path
+            android:fillColor="#00E676"
+            android:pathData="M68,36 L86,36 C87.1,36 88,36.9 88,38 L88,48 L96,44 L88,24 L80,20 L80,28 L68,28 C65.8,28 64,29.8 64,32 C64,34.2 65.8,36 68,36 Z" />
+    </group>
+</vector>

@@ -1,0 +1,15 @@
+<resources>
+    <string name="app_name">ChessMaster</string>
+    <string name="nav_live">Chess.com Live</string>
+    <string name="nav_board">Анализ доски</string>
+    <string name="nav_games">Архив партий</string>
+    <string name="nav_tactics">Уроки GM</string>
+    <string name="sync_board">Синхронизировать</string>
+    <string name="auto_assist">Авто-подсказки</string>
+    <string name="best_move">Лучший ход</string>
+    <string name="gm_advice">Совет гроссмейстера</string>
+    <string name="flip_board">Перевернуть доску</string>
+    <string name="reset_board">Сбросить</string>
+    <string name="eval_white">Белые</string>
+    <string name="eval_black">Черные</string>
+</resources>
