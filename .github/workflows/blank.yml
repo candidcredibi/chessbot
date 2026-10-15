@@ -25,7 +25,7 @@ env:
 jobs:
   build:
     name: Build APK and publish Release
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 60
 
     steps:
@@ -54,7 +54,8 @@ jobs:
           yes | "$SM" --sdk_root="$SDK" --licenses > /dev/null 2>&1
           set -o pipefail
 
-          B=$(ls app/build.gradle.kts app/build.gradle 2>/dev/null | head -n1)
+          B=app/build.gradle.kts
+          [ -f "$B" ] || B=app/build.gradle
           LINE=$(grep -hE 'compileSdk' "$B" | head -n1 || true)
           MAJOR=$(echo "$LINE" | grep -oE 'release\([0-9]+\)' | grep -oE '[0-9]+' | head -n1 || true)
           if [ -z "$MAJOR" ]; then MAJOR=$(echo "$LINE" | grep -oE '[0-9]{2}' | head -n1 || true); fi
